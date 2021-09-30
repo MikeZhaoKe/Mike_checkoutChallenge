@@ -1,0 +1,27 @@
+{
+  "name": "mike-checkoutchallenge",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node index",
+    "dev": "nodemon index"
+  },
+  "dependencies": {
+    "cookie-parser": "~1.4.4",
+    "debug": "~2.6.9",
+    "express": "~4.16.1",
+    "http-errors": "~1.6.3",
+    "jade": "~1.11.0",
+    "morgan": "~1.9.1",
+    "@adyen/adyen-web": "^4.1.0",
+    "@adyen/api-library": "^2.2.1",
+    "babel-core": "^6.26.3",
+    "dotenv": "^8.2.0",
+    "express-handlebars": "^5.1.0",
+    "uuidv4": "^6.1.1"
+  },
+  "devDependencies": {
+    "babel-preset-env": "^1.7.0",
+    "nodemon": "^2.0.2"
+  }
+}
