@@ -1,41 +1,135 @@
-var createError = require('http-errors');
-var express = require('express');
-var path = require('path');
-var cookieParser = require('cookie-parser');
-var logger = require('morgan');
+const express = require("express");
+const path = require("path");
+const hbs = require("express-handlebars");
+const dotenv = require("dotenv");
+const logger = require("morgan");
+const { uuid } = require("uuidv4");
+const { Client, Config, CheckoutAPI } = require("@adyen/api-library");
+// init app
+const app = express();
 
-var indexRouter = require('./routes/index');
-var usersRouter = require('./routes/users');
-
-var app = express();
-
-// view engine setup
-app.set('views', path.join(__dirname, 'views'));
-app.set('view engine', 'jade');
-
-app.use(logger('dev'));
+// Set up request logging
+app.use(logger("dev"));
+// Parse JSON bodies
 app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
-app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
+// Parse URL-encoded bodies
+app.use(express.urlencoded({ extended: true }));
+// Serve client from build folder
+app.use(express.static(path.join(__dirname, "/public")));
 
-app.use('/', indexRouter);
-app.use('/users', usersRouter);
-
-// catch 404 and forward to error handler
-app.use(function(req, res, next) {
-  next(createError(404));
+// Enables environment variables by parsing the .env file and assigning it to process.env
+dotenv.config({
+  path: "./.env",
 });
 
-// error handler
-app.use(function(err, req, res, next) {
-  // set locals, only providing error in development
-  res.locals.message = err.message;
-  res.locals.error = req.app.get('env') === 'development' ? err : {};
+app.engine(
+  "handlebars",
+  hbs({
+    defaultLayout: "main",
+    layoutsDir: __dirname + "/views/layouts",
+  })
+);
 
-  // render the error page
-  res.status(err.status || 500);
-  res.render('error');
+app.set("view engine", "handlebars");
+
+//Based on example of payment methods for a payment of 10 EUR:
+const config = new Config();
+// Set Authentication  with environment variables:
+config.apiKey = process.env.API_KEY;
+const client = new Client({ config });
+client.setEnvironment("TEST");
+const checkout = new CheckoutAPI(client);
+
+// Get payment methods
+app.get("/", async (req, res) => {
+  try {
+    const response = await checkout.paymentMethods({
+      channel: "Web",
+      merchantAccount: process.env.MERCHANT_ACCOUNT,
+    });
+    //res.json(response);
+    res.render("payment", {
+      clientKey: process.env.CLIENT_KEY,
+      response: JSON.stringify(response),
+    });
+  } catch (err) {
+    console.error(`Error: ${err.message}, error code: ${err.errorCode}`);
+    res.status(err.statusCode).json(err.message);
+  }
 });
 
-module.exports = app;
+// Submitting a payment
+app.post("/examplePayment", async (req, res) => {
+  try {
+    const shopperOrder = uuid();
+    // Ideally the data passed here should be computed based on business logic
+    const response = await checkout.payments({
+      amount: { currency: "EUR", value: 1000 }, // value is 10€ in minor units
+      reference: shopperOrder,
+      merchantAccount: process.env.MERCHANT_ACCOUNT,
+      channel: "Web",
+      additionalData: {
+        // required for 3ds2 native flow
+        allow3DS2: true,
+      },
+      origin: "http://localhost:3000", 
+      returnUrl: `http://localhost:3000/checkout?shopperOrder=${shopperOrder}`,
+      browserInfo: req.body.browserInfo,
+      paymentMethod: req.body.paymentMethod,
+    });
+
+    res.json(response);
+  } catch (err) {
+    console.error(`Error: ${err.message}, error code: ${err.errorCode}`);
+    res.status(err.statusCode).json(err.message);
+  }
+});
+
+app.all("/checkout", async (req, res) => {
+  // Create the payload for submitting payment details
+  const redirect = req.method === "GET" ? req.query : req.body;
+  const details = {};
+  if (redirect.redirectResult) {
+    details.redirectResult = redirect.redirectResult;
+  } else if (redirect.payload) {
+    details.payload = redirect.payload;
+  }
+
+  try {
+    const response = await checkout.paymentsDetails({ details });
+    // Conditionally handle different result codes for the shopper
+    switch (response.resultCode) {
+      case "Authorised":
+        res.redirect("/success");
+        break;
+      case "Pending":
+      case "Received":
+        res.redirect("pending");
+        break;
+      case "Refused":
+        res.redirect("failed");
+        break;
+      default:
+        res.redirect("/error");
+        break;
+    }
+  } catch (err) {
+    console.error(`Error: ${err.message}, error code: ${err.errorCode}`);
+    res.redirect("/error");
+  }
+});
+
+
+// Authorised result page
+app.get("/success", (req, res) => res.render("success"));
+// Pending result page
+app.get("/pending", (req, res) => res.render("pending"));
+// Error result page
+app.get("/error", (req, res) => res.render("error"));
+// Refused result page
+app.get("/failed", (req, res) => res.render("failed"));
+
+
+// Start server
+const PORT = process.env.PORT;
+app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
